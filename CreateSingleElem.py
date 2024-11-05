@@ -87,8 +87,9 @@ def CreateElms(E11,E22,E33,G12,G13,G23,nu12,nu32,nu13,		# Material Props
 	# Save all the parameters used to create the model
 	with open(matProps,'w') as f:
 			json.dump(data,f)		
-	#
+###############################################################################################################
 	if HFrame1=='Create single elements':
+###############################################################################################################
 		print('CREATING THE CAE MODEL...')
 		mlist=('mc','mc3','fc','mt','ft','sh12','sh13','sh23','fc10', 'fc20', 'fc30', 'fc45' ) 
 
@@ -315,17 +316,13 @@ def CreateElms(E11,E22,E33,G12,G13,G23,nu12,nu32,nu13,		# Material Props
 		print('Copying pre-compiled subroutine')
 		shutil.copy2(subDir + "explicitU-D.dll", currentDir)
 		print('Please submit the job')
-	###############################################################################
-	# ###################       Plotting   ########################################           
-	###############################################################################
 
 	if not HFrame1 :
 		getWarningReply('Please choose "Calibrate the Model", Create CAE model" or "Plot the results"!\n YES or CANCEL to continue', (YES,CANCEL))
 
-
-	#####
+###############################################################################################################
 	if HFrame1=='Calibrate the Model':	
-
+###############################################################################################################
 
 	# Step 1 - Import calibration data
 		with open(absDir+'\\MatData\\MatProps.json','r') as f:
@@ -432,253 +429,135 @@ def CreateElms(E11,E22,E33,G12,G13,G23,nu12,nu32,nu13,		# Material Props
 
 			
 	# Initial parameters
-	# Step 1 - Import calibration data
+	
 
+		# Step 1 - Import calibration data
 		G12 = float(props["G12"])
 		tau_0 = float(props["tau0"])
 		p = float(props["exp"])
-		g_f = 0.6
-
+		theta_i = float(props["thetai_12"]) # Degrees
 		p_0 = float(props["PO"])
 		mu = float(props["MU"])
+		g_f = 0.6
+		sigY = 0
+		tauXY = 0
 
-		# Precompression
-		s22 = -0.
 
-
-		def solve_curve(G12, p, p_0, mu, tau_0):
+		def solve_curve(g_f, G12, p, p_0, mu, tau_0, theta_i, sigY, tauXY):
 			s22 = 0
-			g_f = 0.6
-			g_0 = tau_0 / G12
+			#g_f = 0.6
+			mu = 0.4
+			eps12m_0 = tau_0 / G12
 			g12 = np.linspace(0., g_f, 2000)
 			s12 = []
 			dmg = []
-			for g_ in g12:
-				if g_ < g_0:
-					s12.append(g_ * G12)
+			sig11 = []
+			eps11 = []
+			for eps12m in g12:
+				if eps12m < eps12m_0:
+					tau12m = eps12m * G12
+					s12.append(tau12m)
 					dmg.append(0)
 				else:
 					# Compute damage
-					d = (g_ ** p - g_0 ** p) / (g_f ** p - g_0 ** p)
+					d = (eps12m ** p - eps12m_0 ** p) / (g_f ** p - eps12m_0 ** p)
 					# Friction
-					s12.append((1. - d) * G12 * g_ - d * np.sign(g_) * mu * (s22 - p_0))
-					dmg.append(d)
+					tau12m =((1. - d) * G12 * eps12m - d * np.sign(eps12m) * mu * (s22 - p_0))
+					s12.append(tau12m)
+					#dmg.append(d)
 
-			return g12, s12, dmg
+				# Simplified kinking
+				theta = eps12m + theta_i * np.pi / 180
+				sigX = sigY + 2*(tauXY*np.cos(2*theta) - tau12m )  / np.sin(2*theta)  
+				sig11.append((sigX)) # Because sig11 will be negative since it is compressive
+				#sig11.append (tau12m / (theta) )
+				eps11.append ( eps12m * np.sin( theta ) )
 
+			return g12, s12, eps11, sig11
 
 		fig, axes = plt.subplots(ncols=2, figsize=(8, 6), sharex=True)
 		ax, ax2 = axes
 		plt.subplots_adjust(left=0.10, bottom=0.35, top=0.95)
-		g12, s12, dmg = solve_curve( G12,  p, p_0, mu, tau_0)
-		# strain12 = np.tan(g12)
-		l_, = ax.plot(g12, s12, 'b-', lw=2)
-		#ax.plot(g12, s12, '-', color='grey', lw=0.5, label='HTS45/LY556 NCF')
-		ax.set_xlabel(r'$\gamma \, (\%)$')
-		ax.set_ylabel(r'$\tau \, (MPa)$')
-		ax.set_xlim(0, 0.20)
-		ax.set_ylim(0, 140)
+		g12, s12, eps11, sig11 = solve_curve(g_f, G12, p, p_0, mu, tau_0, theta_i, sigY, tauXY)
 
-		# Damage axis
-		# ax2 = ax.twinx()
-		ax2.set_ylim(0, 1)
-		l_2, = ax2.plot(g12, dmg, 'b--', lw=2,  label='Damage evolution')
-		# plt.sca(ax)
+		# Plot the curve with the initial values
+		ax.plot(g12, s12, '-', color='blue', lw=2, label='Initial shear calibration')
+		ax.set_xlabel(r'$\gamma_{12} \, (-)$', fontsize=14)
+		ax.set_ylabel(r'$\tau_{12} \, (MPa)$', fontsize=14)
+		ax.set_xlim(0, 0.10)
+		ax.set_ylim(0, 100)
 
+		# Kinking Axis (secondary axis)
+		ax2.set_ylim(0, -1200)
+		ax2.plot(eps11, sig11, '-', color='blue', lw=2, label='Resulting kinking stress')
+		ax2.set_xlabel(r'$\epsilon_{11} \, (-)$', fontsize=14)
+
+		# Add the legend for each axis
+		ax.legend(loc='upper right')
+		ax2.legend(loc='upper right')
+
+		# Slider and Update Function (unchanged)
 		axcolor = 'lightgoldenrodyellow'
-		#ax_S22 = plt.axes([0.35, 0.02, 0.55, 0.03], facecolor='white')
-		ax_p0 = plt.axes([0.35, 0.07, 0.55, 0.03], facecolor=axcolor)
-		ax_p = plt.axes([0.35, 0.12, 0.55, 0.03], facecolor=axcolor)
-		ax_tau0 = plt.axes([0.35, 0.17, 0.55, 0.03], facecolor=axcolor)
-		#ax_gf = plt.axes([0.35, 0.22, 0.55, 0.03], facecolor=axcolor)
 
-		#s_S22 = Slider(ax_S22, r'$\sigma_{22} \, (MPa)$', -100., 100.0, valinit=s22, valstep=1.0)
+		# Define sliders
+		ax_p0 = plt.axes([0.2, 0.02, 0.7, 0.03], facecolor=axcolor)
+		ax_p = plt.axes([0.2, 0.06, 0.7, 0.03], facecolor=axcolor)
+		ax_tau0 = plt.axes([0.2, 0.10, 0.7, 0.03], facecolor=axcolor)
+		ax_theta_i = plt.axes([0.2, 0.22, 0.7, 0.03], facecolor=axcolor)
+		ax_S22 = plt.axes([0.2, 0.14, 0.7, 0.03], facecolor='white')
+		ax_t22 = plt.axes([0.2, 0.18, 0.7, 0.03], facecolor='white')
+
 		s_p0 = Slider(ax_p0, r'$p_0 \, (MPa)$', 0.0, 200.0, valinit=p_0, valstep=1.0)
-		s_p = Slider(ax_p, r'$p$', -1.0, 1.0, valinit=p)
+		s_p = Slider(ax_p, r'$p \, (-)$', -1.0, 1.0, valinit=p)
 		s_tau0 = Slider(ax_tau0, r'$\tau_0 \, (MPa)$', 1, 150, valinit=tau_0, valstep=1.0)
-		#s_gf = Slider(ax_gf, r'$\gamma_f$', 0, 2.0, valinit=g_f, valstep=0.05)
+		t = Slider(ax_theta_i, r'$\theta_i \, (Deg.)$', 0.3, 45, valinit=theta_i)
+		s_S22 = Slider(ax_S22, r'$\sigma_{y} \, (MPa)$', -100., 100.0, valinit=sigY, valstep=1.0)
+		t_S22 = Slider(ax_t22, r'$\tau_{xy} \, (MPa)$', -100., 100.0, valinit=tauXY, valstep=1.0)
+
+
+		# For the updated color
+		l_, = ax.plot(g12, s12, 'b-', lw=2, color='red', label='Updated shear calibration')
+		l_2, = ax2.plot(eps11, sig11, '--', lw=2, color='red', label='Updated kinking stress')
 
 
 		def update(val):
-			# print(val)  # Value of the slider changed
-			#gf_i = s_gf.val
 			tau0_i = s_tau0.val
 			p_i = s_p.val
 			p0_i = s_p0.val
-			#s22_i = s_S22.val
+			theta_i_i = t.val
+			sigY_i = s_S22.val
+			tauXY_i = t_S22.val
 
-			mu_i = float(r_mu.value_selected)
+			gf_i = 0.6
+			mu_i = 0.4
 
-			#g12, s12, dmg = solve_curve(gf_i, G12, s22_i, p_i, p0_i, mu_i, tau0_i)
-			g12, s12, dmg = solve_curve(G12, p_i, p0_i, mu_i, tau0_i)
+			g12, s12, eps11, sig11 = solve_curve(gf_i, G12, p_i, p0_i, mu_i, tau0_i, theta_i_i, sigY_i, tauXY_i)
 
-			#strain12 = np.tan(g12)
 			l_.set_xdata(g12)
 			l_.set_ydata(s12)
-			l_2.set_xdata(g12)
-			l_2.set_ydata(dmg)
+			l_2.set_xdata(eps11)
+			l_2.set_ydata(sig11)
 
+			fig.canvas.draw_idle()
 
-		#s_S22.on_changed(update)
 		s_p0.on_changed(update)
 		s_p.on_changed(update)
 		s_tau0.on_changed(update)
-		#s_gf.on_changed(update)
+		t.on_changed(update)
+		s_S22.on_changed(update)
+		t_S22.on_changed(update)
 
-		ax_mu = plt.axes([0.10, 0.02, 0.12, 0.23], facecolor=axcolor)
-		r_mu = RadioButtons(ax_mu, ('0.6', '0.4', '0.2', '0.1', '0'), active=1, activecolor='grey')
+		Exp_shear = np.loadtxt(sh12f, delimiter=',')
+		gamma_ = Exp_shear[:, 0]
+		tau_ = Exp_shear[:, 1]
 
-		colors = {'0.6': 'red', '0.4': 'black', '0.2': 'blue', '0.1': 'yellow', '0': 'green'}
-
-		def colorfunc(label):
-			l_.set_color(colors[label])
-			l_2.set_color(colors[label])
-			# r_mu.activecolor = colors[label]
-			update(0)
-			fig.canvas.draw_idle()
-
-		r_mu.on_clicked(colorfunc)
-
-		colorfunc(r_mu.value_selected)
-
-		data = np.loadtxt(sh12f, delimiter=',')
-		gamma_ = data[:, 0]
-		tau_ = data[:, 1]
 		# Exp. plot
-		ax.plot(gamma_, tau_, '-', color='cyan', label='HTS45/LY556 NCF')
-		ax2.plot(g12, dmg, 'b--', lw=2,  label='Damage evolution')
+		ax.plot(gamma_, tau_, '-', color='black', label='Exp: NCF HTS45/LY556')
 
+		# Add the legend again to account for the experimental data
+		ax.legend(loc='upper right')
+		ax2.legend(loc='upper right')
 
-		leg = ax.legend()
-		#leg._draggable(True)
-
-		plt.show()
-
-###########################
-###########################
-	if HFrame1=='Plot the results':
-
-		with open(absDir+'\\MatData\\MatProps.json','r') as f:
-			props=json.load(f)
-
-		PartInstance_label_component = {'FC-1':'S11','FC10-1':'S11','FC20-1':'S11','FC30-1':'S11','FC45-1':'S11','FT-1':'S11','MC-1':'S22','MC3-1':'S33','MT-1':'S22','SH12-1':'S12','SH13-1':'S13','SH23-1':'S23',
-			}
-		
-		odb_path = session.viewports[session.currentViewportName].displayedObject.name  # Returns the full path with the name of the .odb otherwise XYPLOT
-		odb = session.odbs[odb_path]
-		step = odb.steps['ApplyLoad']
-
-		# Initialize a list to store data from all frames
-		stress_results = {'FC-1':[],'FC10-1':[],'FC20-1':[],'FC30-1':[],'FC45-1':[],'FT-1':[],'MC-1':[],'MC3-1':[],'MT-1':[],'SH12-1':[],'SH13-1':[],'SH23-1':[],}
-		strain_results = {'FC-1':[],'FC10-1':[],'FC20-1':[],'FC30-1':[],'FC45-1':[],'FT-1':[],'MC-1':[],'MC3-1':[],'MT-1':[],'SH12-1':[],'SH13-1':[],'SH23-1':[],}
-
-		engStrain = [0,-1.24064e-5,-0.98506e-5,-33.0083e-5,-77.6423e-5,-150.485e-5,-257.996e-5,-406.556e-5,-602.214e-5,-850.959e-5,-0.0115826,-0.0152967,-0.0197046,-0.0248567,-0.0308019,-0.0375867,-0.0452559,-0.0538523,-0.0634168,-0.0739886,-0.0856,-0.0982957,-0.112105,-0.127059,-0.143189,-0.160522,-0.179086,-0.198905,-0.220003,-0.242401,-0.266119,-0.291175,-0.317587,-0.34537,-0.374543,-0.405108,-0.43708,-0.470468,-0.505282,-0.541526,-0.579207,-0.618328,-0.658891,-0.700897,-0.744346,-0.789237,-0.835565,-0.883329,-0.932521,-0.983136,-1.03517,-1.0886,-1.14343,-1.19965,-1.25724,-1.31619,-1.37649,-1.43812,-1.50106,-1.5653,-1.63081,-1.69759,-1.76561,-1.83484,-1.90528,-1.97688,-2.04964,-2.12353,-2.19852,-2.27459,-2.35171,-2.42985,-2.50899,-2.58909,-2.67014,-2.75209,-2.83492,-2.9186,-3.0031,-3.08838,-3.17442,-3.26117,-3.34861,-3.43671,-3.52542,-3.61472,-3.70457,-3.79493,-3.88577,-3.97706,-4.06875,-4.16081,-4.25321,-4.34591,-4.43887,-4.53205,-4.62542,-4.71894,-4.81257,-4.90627,-5.00002,-5.09376,-5.18747,-5.2811,-5.37462,-5.46799,-5.56117,-5.65413,-5.74682,-5.83922,-5.93129,-6.02298,-6.11426,-6.20511,-6.29546,-6.38533,-6.47463,-6.56333,-6.65142,-6.73885,-6.8256,-6.91164,-6.99692,-7.08142,-7.16511,-7.24794,-7.32989,-7.41095,-7.49105,-7.57019,-7.64833,-7.72545,-7.80151,-7.8765,-7.95039,-8.02315,-8.09476,-8.16519,-8.23442,-8.30244,-8.36921,-8.43473,-8.49897,-8.56191,-8.62354,-8.68383,-8.74278,-8.80037,-8.85659,-8.91141,-8.96486,-9.01689,-9.06751,-9.1167,-9.16446,-9.21078,-9.25567,-9.29912,-9.34112,-9.38169,-9.4208,-9.45849,-9.49473,-9.52954,-9.56293,-9.5949,-9.62547,-9.65463,-9.68242,-9.70883,-9.73388,-9.7576,-9.78,-9.8011,-9.82092,-9.83948,-9.85681,-9.87294,-9.8879,-9.90171,-9.9144,-9.92602,-9.93659,-9.94615,-9.95475,-9.96242,-9.9692,-9.97515,-9.9803,-9.98471,-9.98842,-9.99149,-9.99398,-9.99593,-9.99742,-9.9985,-9.99922,-9.99967,-9.9999,-9.99999,-10]
-		
-		for label, component in PartInstance_label_component.items():
-			variable ="S"
-
-			xyList = xyPlot.xyDataListFromField(odb=odb, outputPosition=ELEMENT_CENTROID, 
-				variable=((variable, INTEGRATION_POINT, ((COMPONENT, component), )), ), 
-				elementLabels=((label, ('1', )), ))
-			
-			if label == "SH12-1": component, variable = "LE12", "LE"
-			if label == "SH13-1": component, variable = "LE13", "LE"
-			if label == "SH23-1": component, variable = "LE23", "LE"
-
-			xyListStrain = xyPlot.xyDataListFromField(odb=odb, outputPosition=ELEMENT_CENTROID, 
-					variable=((variable, INTEGRATION_POINT, ((COMPONENT, component), )), ), 
-					elementLabels=((label, ('1', )), ))
-						
-			strain_results[label].append(xyListStrain[0].data)
-			stress_results[label].append(xyList[0].data)
-	
-				
-		# Extract time and stress data for plotting
-		#time_fc1 = [data[1] for data in strain_results['FC-1'][0]]
-		FC = [data[1] for data in stress_results['FC-1'][0]]
-		FC10 = [data[1] for data in stress_results['FC10-1'][0]]
-		FC20 = [data[1] for data in stress_results['FC20-1'][0]]
-		FC30 = [data[1] for data in stress_results['FC30-1'][0]]
-		FC45 = [data[1] for data in stress_results['FC45-1'][0]]
-		FT = [data[1] for data in stress_results['FT-1'][0]]
-		MC = [data[1] for data in stress_results['MC-1'][0]]
-		MC3 = [data[1] for data in stress_results['MC3-1'][0]]
-		MT = [data[1] for data in stress_results['MT-1'][0]]
-		SH12 = [data[1] for data in stress_results['SH12-1'][0]]
-		SH13 = [data[1] for data in stress_results['SH13-1'][0]]
-		SH23 = [data[1] for data in stress_results['SH23-1'][0]]
-
-		SH12_strain = [data[1] for data in strain_results['SH12-1'][0]]
-		SH13_strain = [data[1] for data in strain_results['SH13-1'][0]]
-		SH23_strain = [data[1] for data in strain_results['SH23-1'][0]]
-
-		colors = ['#1f77b4', '#ff7f0e', 'grey', '#d62728',  'black']
-
-		##### START PLOTTING ######
-		# Tensile Loading 
-		plt.figure(figsize=(10, 6))
-		plt.plot(np.abs(engStrain[:len(FT)]), FT, label= "Fibre tension" , color=colors[0])
-		plt.plot(np.abs(engStrain[:len(MT)]), MT, label= "Matrix tension" , color=colors[1])
-		plt.scatter(props['XT_eps'],props['XT'], color=colors[0], marker='x', s=100, label='Longitudinal tensile strength')
-		plt.scatter(props['YT_eps'],props['YT'], color=colors[1], marker='x', s=100, label='Transverse tensile strength')
-		# Compressive loading 
-		plt.plot(engStrain[:len(FC)], FC, label= "Fibre compression", color= colors[2])
-		plt.plot(engStrain[:len(MC)], MC, label= "Matrix compression" , color= colors[3] )
-		plt.scatter(props['XC_eps'], props['XC'], color=colors[2], marker='x', s=100, label='Longitudinal compressive strength')
-		plt.scatter(props['YC_eps'],props['YC'], color=colors[3], marker='x', s=100, label='Transverse compressive strength')
-
-		# Axis labels and legend
-		plt.xlabel('Engineering strain (%)', fontsize=18)
-		plt.ylabel('Stress (MPa)', fontsize=18)
-		plt.legend(fontsize=13)
-		# Grid and ticks
-		plt.grid(True, linestyle='--', alpha=0.7)
-		plt.xticks(fontsize=16)
-		plt.yticks(fontsize=16)
-		plt.show()
-
-		###### Shear loading 
-		plt.figure(figsize=(10, 6))
-		half_index = len(SH12_strain) // 2
-
-		plt.plot(np.abs(SH12_strain[:half_index])*100, np.abs(SH12[:half_index]), label= "In-plane shear", color= colors[0])
-		plt.plot(np.abs(SH13_strain[:half_index])*100, np.abs(SH13[:half_index]), label= "Out-off-plane shear (1-3)", color= colors[1])
-		plt.plot(np.abs(SH23_strain[:half_index])*100, np.abs(SH23[:half_index]), label= "Out-off-plane shear (2-3)", color= colors[2])
-
-		plt.axhline(y=props['SL'], color=colors[0], linewidth=3, alpha=0.2, label='Experimental shear strength')
-
-		# Axis labels and legend
-		plt.xlabel('Engineering strain (%)', fontsize=18)
-		plt.ylabel('Shear stress (MPa)', fontsize=18)
-		plt.legend(fontsize=13)
-
-
-		# Grid and ticks
-		plt.grid(True, linestyle='--', alpha=0.7)
-		plt.xticks(fontsize=16)
-		plt.yticks(fontsize=16)
-		plt.show()
-
-		# Off-axis
-		plt.figure(figsize=(10, 6))
-
-		plt.plot(engStrain[:len(FC10)], FC10, label=r" $\theta_i$=" + str(theta_i + props['fc10'] ) + r"$^\circ$", color=colors[0], linewidth=2)
-		plt.plot(engStrain[:len(FC)], FC, label=r" $\theta_i$="  + str(theta_i)  + r"$^\circ$", color=colors[2],alpha=0.6, linewidth=2)
-		plt.plot(engStrain[:len(FC20)], FC20, label=r" $\theta_i$=" + str(theta_i + props['fc20'] ) + r"$^\circ$", color=colors[1], linewidth=2)
-		plt.plot(engStrain[:len(FC30)], FC30, label=r" $\theta_i$=" + str(theta_i + props['fc30'] ) + r"$^\circ$", color=colors[4], linewidth=2)
-		plt.plot(engStrain[:len(FC45)], FC45, label=r" $\theta_i$=" + str(theta_i + props['fc45'] ) + r"$^\circ$", color=colors[3], linewidth=2)
-
-		plt.axhline(y=props['XC'], color=colors[4], linewidth=4, alpha=0.6, label='Experimental strength')
-
-		# Axis labels and legend
-		plt.xlabel('Engineering strain (%)', fontsize=18)
-		plt.ylabel('Stress (MPa)', fontsize=18)
-		plt.legend(fontsize=13)
-
-		# Grid and ticks
-		plt.grid(True, linestyle='--', alpha=0.7)
-		plt.xticks(fontsize=16)
-		plt.yticks(fontsize=16)
 		plt.show()
 
 

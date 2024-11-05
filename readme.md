@@ -1,4 +1,4 @@
-# UniDam: An Abaqus Plugin for Calibration and Validation of a Damage Model for Composites
+# UniDam: An Abaqus Plugin to break down verification of a damage model for composites
 
 ## Overview
 UniDam is a robust Abaqus plugin designed to facilitate the usage of a state-of-the-art damage model for composite materials. Developed to support researchers and engineers working with composite structures, UniDam aims to streamline the processes of model calibration, verification, and visualization.
